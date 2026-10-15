@@ -11,7 +11,7 @@ use radar_core::{Sensor, SensorKind, Stats, SysPoint, query};
 use crate::askpass::{self, Kind, Prompt};
 use crate::axis::Format;
 use crate::cards::Card;
-use crate::chart::{Series, Style, YRange};
+use crate::chart::{AxisGroup, Series, Style, YRange};
 use crate::config::Config;
 use crate::machine::{self, MachinePicker};
 use crate::palette::{CYCLE, ColorRole, Hue};
@@ -165,6 +165,10 @@ pub fn build(
             quota: Card::new("AI Quota Remaining", Format::Percent, YRange::Fixed(100.0)),
             tokens: Card::new("AI Tokens", Format::TokensPerMin, YRange::Auto),
         };
+        let axes = AxisGroup::default();
+        for card in cards.all() {
+            card.chart.join_axis_group(&axes);
+        }
         let try_again = gtk::Button::builder()
             .label("Try Again")
             .halign(gtk::Align::Center)

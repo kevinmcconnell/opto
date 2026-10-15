@@ -50,6 +50,7 @@ struct Data {
     drag: Option<(f64, f64)>,
     on_zoom: Option<Rc<dyn Fn(i64, i64)>>,
     palette: Option<Palette>,
+    axis_group: Option<(AxisGroup, usize)>,
 }
 
 impl Data {
@@ -66,6 +67,56 @@ impl Data {
 
     fn in_plot(&self, x: f64) -> bool {
         x >= self.plot.left && x <= self.plot.left + self.plot.width
+    }
+}
+
+/// Charts that share one width for their y-axis labels, so a time falls at the same x in each.
+#[derive(Clone, Default)]
+pub struct AxisGroup(Rc<RefCell<Vec<AxisMember>>>);
+
+struct AxisMember {
+    area: glib::WeakRef<gtk::DrawingArea>,
+    label_w: f64,
+}
+
+impl AxisGroup {
+    fn join(&self, area: &gtk::DrawingArea) -> usize {
+        let mut members = self.0.borrow_mut();
+        members.push(AxisMember {
+            area: area.downgrade(),
+            label_w: 0.0,
+        });
+        members.len() - 1
+    }
+
+    /// Records one member's label width; the others redraw if it changed.
+    fn record(&self, index: usize, label_w: f64) {
+        let mut members = self.0.borrow_mut();
+        if members[index].label_w == label_w {
+            return;
+        }
+        members[index].label_w = label_w;
+        let others: Vec<_> = members
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != index)
+            .map(|(_, m)| m.area.clone())
+            .collect();
+        glib::idle_add_local_once(move || {
+            for area in others.iter().filter_map(|a| a.upgrade()) {
+                area.queue_draw();
+            }
+        });
+    }
+
+    /// The widest label width among the charts on screen.
+    fn widest(&self) -> f64 {
+        self.0
+            .borrow()
+            .iter()
+            .filter(|m| m.area.upgrade().is_some_and(|a| a.is_mapped()))
+            .map(|m| m.label_w)
+            .fold(0.0, f64::max)
     }
 }
 
@@ -100,6 +151,7 @@ impl TimeSeriesChart {
             drag: None,
             on_zoom: None,
             palette: None,
+            axis_group: None,
         }));
         let chart = TimeSeriesChart { area, data };
         chart.setup();
@@ -126,8 +178,17 @@ impl TimeSeriesChart {
             d.to = to.max(from + 1);
             d.bucket = bucket.max(1);
             d.series = series;
+            if let Some((group, index)) = &d.axis_group {
+                let layout = label_layout(&self.area);
+                group.record(*index, y_axis(&d, &layout).2);
+            }
         }
         self.area.queue_draw();
+    }
+
+    pub fn join_axis_group(&self, group: &AxisGroup) {
+        let index = group.join(&self.area);
+        self.data.borrow_mut().axis_group = Some((group.clone(), index));
     }
 
     pub fn connect_zoom(&self, f: impl Fn(i64, i64) + 'static) {
@@ -227,11 +288,7 @@ fn set_color(cr: &cairo::Context, c: &gdk::RGBA) {
     );
 }
 
-fn draw(area: &gtk::DrawingArea, cr: &cairo::Context, width: f64, height: f64, d: &mut Data) {
-    let fg = area.color();
-    let hc = adw::StyleManager::default().is_high_contrast();
-    let line_width = if hc { 2.5 } else { 1.75 };
-
+fn label_layout(area: &gtk::DrawingArea) -> pango::Layout {
     let layout = area.create_pango_layout(None);
     let mut font = area.pango_context().font_description().unwrap_or_default();
     let small = (font.size() as f64 * 0.85) as i32;
@@ -241,15 +298,11 @@ fn draw(area: &gtk::DrawingArea, cr: &cairo::Context, width: f64, height: f64, d
         font.set_size(small);
     }
     layout.set_font_description(Some(&font));
-    layout.set_text("0");
-    let text_h = layout.pixel_size().1 as f64;
+    layout
+}
 
-    let legend_h = if d.series.len() > 1 {
-        draw_legend(cr, &layout, d, width, fg, text_h)
-    } else {
-        0.0
-    };
-
+/// The top of the y axis, its ticks, and the width of their widest label.
+fn y_axis(d: &Data, layout: &pango::Layout) -> (f64, Vec<f64>, f64) {
     let data_max = d
         .series
         .iter()
@@ -259,15 +312,40 @@ fn draw(area: &gtk::DrawingArea, cr: &cairo::Context, width: f64, height: f64, d
         YRange::Fixed(max) => (max, axis::fixed_ticks(max)),
         YRange::Auto => axis::y_ticks(data_max, d.format),
     };
-
-    let labels: Vec<String> = ticks.iter().map(|&v| d.format.format(v)).collect();
-    let label_w = labels
+    let label_w = ticks
         .iter()
-        .map(|l| {
-            layout.set_text(l);
+        .map(|&v| {
+            layout.set_text(&d.format.format(v));
             layout.pixel_size().0 as f64
         })
         .fold(0.0, f64::max);
+    (top_value, ticks, label_w)
+}
+
+fn draw(area: &gtk::DrawingArea, cr: &cairo::Context, width: f64, height: f64, d: &mut Data) {
+    let fg = area.color();
+    let hc = adw::StyleManager::default().is_high_contrast();
+    let line_width = if hc { 2.5 } else { 1.75 };
+
+    let layout = label_layout(area);
+    layout.set_text("0");
+    let text_h = layout.pixel_size().1 as f64;
+
+    let legend_h = if d.series.len() > 1 {
+        draw_legend(cr, &layout, d, width, fg, text_h)
+    } else {
+        0.0
+    };
+
+    let (top_value, ticks, label_w) = y_axis(d, &layout);
+    let labels: Vec<String> = ticks.iter().map(|&v| d.format.format(v)).collect();
+    let label_w = match &d.axis_group {
+        Some((group, index)) => {
+            group.record(*index, label_w);
+            group.widest().max(label_w)
+        }
+        None => label_w,
+    };
 
     d.plot = Plot {
         left: (label_w + 10.0).round(),
@@ -542,6 +620,7 @@ mod tests {
             drag: None,
             on_zoom: None,
             palette: None,
+            axis_group: None,
         }
     }
 
