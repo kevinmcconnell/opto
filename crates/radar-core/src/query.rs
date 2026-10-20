@@ -31,7 +31,12 @@ pub fn sys_series(
                 sum(net_tx) * 1000.0 / sum(CASE WHEN net_tx IS NOT NULL THEN dt_ms END),
                 sum(disk_read) * 1000.0 / sum(CASE WHEN disk_read IS NOT NULL THEN dt_ms END),
                 sum(disk_write) * 1000.0 / sum(CASE WHEN disk_write IS NOT NULL THEN dt_ms END),
-                max(cpu_busy IS NULL)
+                max(cpu_busy IS NULL),
+                max(cpu_busy), max(cpu_iowait), max(mem_used), max(swap_used),
+                max(net_rx * 1000.0 / nullif(dt_ms, 0)),
+                max(net_tx * 1000.0 / nullif(dt_ms, 0)),
+                max(disk_read * 1000.0 / nullif(dt_ms, 0)),
+                max(disk_write * 1000.0 / nullif(dt_ms, 0))
          FROM sys_samples
          WHERE ts BETWEEN :from AND :to
          GROUP BY t ORDER BY t",
@@ -52,6 +57,14 @@ pub fn sys_series(
                 disk_read: r.get(9)?,
                 disk_write: r.get(10)?,
                 gap: r.get(11)?,
+                cpu_busy_peak: r.get(12)?,
+                cpu_iowait_peak: r.get(13)?,
+                mem_used_peak: r.get(14)?,
+                swap_used_peak: r.get(15)?,
+                net_rx_peak: r.get(16)?,
+                net_tx_peak: r.get(17)?,
+                disk_read_peak: r.get(18)?,
+                disk_write_peak: r.get(19)?,
             })
         },
     )?;
@@ -152,6 +165,7 @@ fn sensor_data(mut rows: rusqlite::Rows) -> rusqlite::Result<SensorData> {
             t,
             sensor_id,
             value: total / samples as f64,
+            peak,
         });
         let sensor = totals.entry(sensor_id).or_insert((0.0, peak, 0));
         sensor.0 += total;
@@ -285,10 +299,23 @@ mod tests {
         assert_eq!(pts.len(), 3);
         assert_eq!(pts[0].t, 1000);
         assert_eq!(pts[0].cpu_busy, Some(20.0));
+        assert_eq!(pts[0].cpu_busy_peak, Some(20.0));
         assert_eq!(pts[0].net_rx, Some(1000.0));
         assert_eq!(pts[1].t, 1010);
         assert_eq!(pts[1].net_rx, Some(3000.0));
+        assert_eq!(pts[1].net_rx_peak, Some(3000.0));
         assert_eq!(pts[2].mem_total, Some(1000.0));
+    }
+
+    #[test]
+    fn sys_series_rate_peak_is_the_fastest_sample() {
+        let conn = db::open_rw_in_memory().unwrap();
+        insert_sys(&conn, 1000, 1000, Some(0.0), Some(1000));
+        insert_sys(&conn, 1005, 8000, Some(0.0), Some(4000));
+
+        let pts = sys_series(&conn, 1000, 1009, 10).unwrap();
+        assert_eq!(pts[0].net_rx, Some(5000.0 * 1000.0 / 9000.0));
+        assert_eq!(pts[0].net_rx_peak, Some(1000.0));
     }
 
     #[test]
@@ -345,6 +372,7 @@ mod tests {
         assert!(!pts[0].gap);
         assert!(pts[1].gap);
         assert_eq!(pts[0].cpu_busy, Some(50.0));
+        assert_eq!(pts[0].cpu_busy_peak, Some(100.0));
 
         let st = sys_stats(&conn, 1000, 1020).unwrap();
         assert_eq!(
@@ -388,12 +416,14 @@ mod tests {
                 SensorPoint {
                     t: 100,
                     sensor_id: 1,
-                    value: 45.0
+                    value: 45.0,
+                    peak: 50.0
                 },
                 SensorPoint {
                     t: 110,
                     sensor_id: 1,
-                    value: 60.0
+                    value: 60.0,
+                    peak: 60.0
                 },
             ]
         );
@@ -427,12 +457,14 @@ mod tests {
                 SensorPoint {
                     t: 900,
                     sensor_id: 1,
-                    value: 40.0
+                    value: 40.0,
+                    peak: 60.0
                 },
                 SensorPoint {
                     t: 1800,
                     sensor_id: 1,
-                    value: 80.0
+                    value: 80.0,
+                    peak: 80.0
                 },
             ]
         );
@@ -467,10 +499,16 @@ mod tests {
         roll_up_sensor_samples(&conn);
 
         let data = sensor_series(&conn, 310, 1300, 300).unwrap();
-        let values: Vec<(i64, f64)> = data.points.iter().map(|p| (p.t, p.value)).collect();
+        let values: Vec<(i64, f64, f64)> =
+            data.points.iter().map(|p| (p.t, p.value, p.peak)).collect();
         assert_eq!(
             values,
-            [(300, 55.0), (600, 40.0), (900, 70.0), (1200, 40.0)]
+            [
+                (300, 55.0, 90.0),
+                (600, 40.0, 50.0),
+                (900, 70.0, 70.0),
+                (1200, 40.0, 40.0)
+            ]
         );
         assert_eq!(
             data.stats[&1],
