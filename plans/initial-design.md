@@ -1,9 +1,9 @@
-# radar — personal system activity recorder & viewer
+# opto — personal system activity recorder & viewer
 
 Build a small two-part tool for a single-user Linux desktop (Omarchy / Arch Linux):
 
-1. **`radar-collect`** — a lightweight daemon (systemd *user* service) that samples system stats every 5 seconds into SQLite.
-2. **`radar`** — a GTK4 + libadwaita app showing a single view: pick a time range, see filled line charts of CPU, temperatures, memory, network and disk over time, plus the top N processes by CPU time for that range.
+1. **`opto-collect`** — a lightweight daemon (systemd *user* service) that samples system stats every 5 seconds into SQLite.
+2. **`opto`** — a GTK4 + libadwaita app showing a single view: pick a time range, see filled line charts of CPU, temperatures, memory, network and disk over time, plus the top N processes by CPU time for that range.
 
 The goal is to answer "how busy has my machine been, and why?" — not to be a general monitoring system.
 
@@ -19,22 +19,22 @@ The goal is to answer "how busy has my machine been, and why?" — not to be a g
 ## Tech stack
 
 - Rust, Cargo workspace with three crates:
-  - `radar-core` — schema, migrations, shared query functions, types.
-  - `radar-collect` — the collector binary.
-  - `radar` — the GTK app.
+  - `opto-core` — schema, migrations, shared query functions, types.
+  - `opto-collect` — the collector binary.
+  - `opto` — the GTK app.
 - `rusqlite` (using the system SQLite from Arch's `sqlite` package).
 - `gtk4` + `libadwaita` (rs bindings; require libadwaita ≥ 1.6 for the accent color API, with a fallback if unavailable).
 - Keep dependencies minimal in the collector (no tokio, no clap-derive heavy stacks if avoidable; `lexopt` or plain `std::env::args` is fine).
 - Build dependencies on Arch: `rust`, `pkgconf`, `gtk4`, `libadwaita`, `sqlite`.
-- Add a `Makefile` or `justfile` with an `install` target that builds in release mode, copies both binaries to `~/.local/bin`, installs the systemd user unit and a `.desktop` file plus icon under `~/.local/share`, and runs `systemctl --user enable --now radar-collect`.
+- Add a `Makefile` or `justfile` with an `install` target that builds in release mode, copies both binaries to `~/.local/bin`, installs the systemd user unit and a `.desktop` file plus icon under `~/.local/share`, and runs `systemctl --user enable --now opto-collect`.
 
 ## Database
 
-Location: `$XDG_DATA_HOME/radar/radar.db` (default `~/.local/share/radar/radar.db`), overridable with `--db`.
+Location: `$XDG_DATA_HOME/opto/opto.db` (default `~/.local/share/opto/opto.db`), overridable with `--db`.
 
 Pragmas on open (collector): `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`. The viewer opens read-only (`SQLITE_OPEN_READ_ONLY`), which works concurrently with WAL.
 
-Use `PRAGMA user_version` for schema migrations, implemented in `radar-core`.
+Use `PRAGMA user_version` for schema migrations, implemented in `opto-core`.
 
 ```sql
 -- One row per 5s sample. Delta columns are NULL for the first sample
@@ -110,7 +110,7 @@ ON CONFLICT (ts, name_id) DO UPDATE SET cpu_ticks = cpu_ticks + excluded.cpu_tic
 
 Expected size at 5 days: ~86k `sys_samples` rows, a few hundred thousand `sensor_samples` and `proc_minutes` rows — tens of MB at most. No VACUUM needed; freed pages from trimming are reused, so the file reaches a steady size.
 
-## Collector (`radar-collect`)
+## Collector (`opto-collect`)
 
 ### Loop
 
@@ -136,7 +136,7 @@ Expected size at 5 days: ~86k `sys_samples` rows, a few hundred thousand `sensor
 | Battery power (optional) | `/sys/class/power_supply/BAT*/power_now` | Microwatts; laptops only. |
 | CPU clock (optional) | `/sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq` | kHz per CPU thread. The threads of one physical core (`topology/physical_package_id` and `core_id`) share a clock, so a core has the highest speed and the highest busy share of its threads. An idle thread reports the minimum speed. Stored as two sensors on chip `cpu`: `busy cores` (mean over the cores that were busy for at least 90% of the interval, weighted by their busy share from the `cpuN` lines of `/proc/stat`; no value when there is no such core) and `fastest core`. Under sustained load, `busy cores` drops when the CPU throttles. |
 | Per-process CPU | `/proc/[pid]/stat` | See below. |
-| AI quota (optional) | Codex: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`; Claude Code: `$XDG_STATE_HOME/radar/claude/<session>.jsonl` | Percent remaining of each rate-limit window, as a gauge that reads 100 once the window's `resets_at` passes. Codex writes a `token_count` event with `rate_limits.primary` (5h) and `secondary` (7d) on every API response; only the newest seven day directories are watched, and each file is read from where the last read stopped. Claude Code has no local quota file, so the `radar-claude-statusline` script appends each status line JSON (`rate_limits.five_hour` / `seven_day`) to a per-session file, which the collector tails like the Codex logs. Stored as sensors on chip `claude` or `codex`, labels `5h` and `7d`. |
+| AI quota (optional) | Codex: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`; Claude Code: `$XDG_STATE_HOME/opto/claude/<session>.jsonl` | Percent remaining of each rate-limit window, as a gauge that reads 100 once the window's `resets_at` passes. Codex writes a `token_count` event with `rate_limits.primary` (5h) and `secondary` (7d) on every API response; only the newest seven day directories are watched, and each file is read from where the last read stopped. Claude Code has no local quota file, so the `opto-claude-statusline` script appends each status line JSON (`rate_limits.five_hour` / `seven_day`) to a per-session file, which the collector tails like the Codex logs. Stored as sensors on chip `claude` or `codex`, labels `5h` and `7d`. |
 | AI tokens (optional) | Same files | Tokens per minute, input and output, from the responses seen during the interval. Codex: `token_usage_record.usage`, deduplicated by `response_id`. Claude Code: `context_window.total_input_tokens` / `total_output_tokens` of the most recent response, counted when `cost.total_api_duration_ms` changes. Stored as sensors with labels `input` and `output`. |
 
 Re-run sensor, interface and disk discovery every 5 minutes, to handle hotplug (USB NICs, docks).
@@ -171,14 +171,14 @@ Common AMD sensors to expect: `k10temp` → `Tctl`, `Tccd1..n`; `amdgpu` → `ed
 
 ### systemd user unit
 
-`~/.config/systemd/user/radar-collect.service`:
+`~/.config/systemd/user/opto-collect.service`:
 
 ```ini
 [Unit]
-Description=radar system activity collector
+Description=opto system activity collector
 
 [Service]
-ExecStart=%h/.local/bin/radar-collect
+ExecStart=%h/.local/bin/opto-collect
 Restart=on-failure
 Nice=19
 IOSchedulingClass=idle
@@ -191,7 +191,7 @@ WantedBy=default.target
 
 The `install` target places this unit and enables it.
 
-## Viewer (`radar`)
+## Viewer (`opto`)
 
 ### Layout (single window)
 
@@ -288,12 +288,12 @@ Drawing with Cairo:
 - All `/proc` and `/sys` parsing lives in pure functions that take `&str` / `&[u8]`, with unit tests against fixture files captured from real machines (include an AMD `k10temp` example and a `comm` containing spaces and parentheses).
 - Make the sysfs root path configurable (default `/`) so discovery can be tested against a fake directory tree in `tests/fixtures/`.
 - Test delta logic: PID reuse, process start mid-interval, counter reset, suspend gap.
-- Test query functions in `radar-core` against an in-memory DB seeded with synthetic data, including gaps and NULL deltas.
-- Add a `radar-collect --seed-demo <days>` dev command, or a test helper, that generates realistic fake history so the viewer can be developed without waiting for days of data.
+- Test query functions in `opto-core` against an in-memory DB seeded with synthetic data, including gaps and NULL deltas.
+- Add a `opto-collect --seed-demo <days>` dev command, or a test helper, that generates realistic fake history so the viewer can be developed without waiting for days of data.
 
 ## Build order
 
-1. Workspace, `radar-core` with schema, migrations and query functions, plus tests.
+1. Workspace, `opto-core` with schema, migrations and query functions, plus tests.
 2. Collector parsing functions with fixtures and tests.
 3. Collector loop: sampling, deltas, gap handling, DB writes, retention trim, `--once`, `--list-sensors`.
 4. systemd unit and `install` target. Install it and let it collect while building the viewer.

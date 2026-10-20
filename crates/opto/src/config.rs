@@ -1,0 +1,152 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+
+use opto_core::{Sensor, SensorKind};
+
+/// Explicit sensor visibility choices; sensors without one use `default_visible`.
+#[derive(Debug, Default)]
+pub struct Config {
+    sensors: HashMap<String, bool>,
+}
+
+pub fn dir() -> PathBuf {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config")
+        });
+    base.join("opto")
+}
+
+fn path() -> PathBuf {
+    dir().join("viewer.conf")
+}
+
+pub fn default_visible(s: &Sensor) -> bool {
+    if s.kind != SensorKind::Temp {
+        return true;
+    }
+    let chip = s.chip.split(':').next().unwrap_or_default();
+    matches!(
+        (chip, s.label.as_str()),
+        ("k10temp", "Tctl")
+            | ("coretemp", "Package id 0")
+            | ("amdgpu", "edge")
+            | ("nvme", "Composite")
+    )
+}
+
+fn key(s: &Sensor) -> String {
+    match s.kind {
+        SensorKind::Temp => s.key(),
+        kind => format!("{}:{}", kind.as_str(), s.key()),
+    }
+}
+
+impl Config {
+    pub fn load() -> Self {
+        let text = std::fs::read_to_string(path()).unwrap_or_default();
+        Self::parse(&text)
+    }
+
+    fn parse(text: &str) -> Self {
+        let sensors = text
+            .lines()
+            .filter_map(|l| match l.split_at_checked(1)? {
+                ("+", key) => Some((key.to_string(), true)),
+                ("-", key) => Some((key.to_string(), false)),
+                _ => None,
+            })
+            .collect();
+        Config { sensors }
+    }
+
+    fn serialize(&self) -> String {
+        let mut lines: Vec<String> = self
+            .sensors
+            .iter()
+            .map(|(k, &v)| format!("{}{k}", if v { '+' } else { '-' }))
+            .collect();
+        lines.sort();
+        lines.join("\n") + "\n"
+    }
+
+    pub fn save(&self) {
+        let path = path();
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Err(e) = std::fs::write(&path, self.serialize()) {
+            eprintln!("opto: saving {}: {e}", path.display());
+        }
+    }
+
+    pub fn visible(&self, s: &Sensor) -> bool {
+        self.sensors
+            .get(&key(s))
+            .copied()
+            .unwrap_or_else(|| default_visible(s))
+    }
+
+    pub fn set_visible(&mut self, s: &Sensor, visible: bool) {
+        self.sensors.insert(key(s), visible);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp(chip: &str, label: &str) -> Sensor {
+        Sensor {
+            id: 1,
+            kind: SensorKind::Temp,
+            chip: chip.into(),
+            label: label.into(),
+            unit: "°C".into(),
+        }
+    }
+
+    fn fan(chip: &str, label: &str) -> Sensor {
+        Sensor {
+            kind: SensorKind::Fan,
+            unit: "RPM".into(),
+            ..temp(chip, label)
+        }
+    }
+
+    #[test]
+    fn fans_are_visible_until_hidden() {
+        let mut c = Config::default();
+        assert!(c.visible(&fan("asusec", "CPU_Opt")));
+
+        c.set_visible(&fan("asusec", "CPU_Opt"), false);
+        let c = Config::parse(&c.serialize());
+        assert!(!c.visible(&fan("asusec", "CPU_Opt")));
+    }
+
+    #[test]
+    fn fan_and_temp_with_the_same_name_are_independent() {
+        let mut c = Config::default();
+        c.set_visible(&fan("asusec", "Chipset"), false);
+        c.set_visible(&temp("asusec", "Chipset"), true);
+        let c = Config::parse(&c.serialize());
+        assert!(!c.visible(&fan("asusec", "Chipset")));
+        assert!(c.visible(&temp("asusec", "Chipset")));
+    }
+
+    #[test]
+    fn defaults_and_overrides_round_trip() {
+        let mut c = Config::default();
+        assert!(c.visible(&temp("k10temp", "Tctl")));
+        assert!(c.visible(&temp("nvme:nvme1", "Composite")));
+        assert!(!c.visible(&temp("k10temp", "Tccd1")));
+
+        c.set_visible(&temp("k10temp", "Tccd1"), true);
+        c.set_visible(&temp("nvme:nvme1", "Composite"), false);
+        let c = Config::parse(&c.serialize());
+        assert!(c.visible(&temp("k10temp", "Tccd1")));
+        assert!(!c.visible(&temp("nvme:nvme1", "Composite")));
+    }
+}

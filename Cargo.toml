@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/radar-core", "crates/radar-collect", "crates/radar", "crates/omarchy-theme"]
+members = ["crates/opto-core", "crates/opto-collect", "crates/opto", "crates/omarchy-theme"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,7 +8,7 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-radar-core = { path = "crates/radar-core" }
+opto-core = { path = "crates/opto-core" }
 omarchy-theme = { path = "crates/omarchy-theme" }
 rusqlite = "0.40"
 serde = { version = "1", features = ["derive"] }

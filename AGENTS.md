@@ -1,6 +1,6 @@
-# Working on Radar
+# Working on Opto
 
-Radar records what a single-user Linux desktop has been doing and charts it.
+Opto records what a single-user Linux desktop has been doing and charts it.
 Read the README for what it does and how to build it. This file is for
 anyone changing the code.
 
@@ -9,35 +9,35 @@ anyone changing the code.
 Three crates in `crates/`, plus `omarchy-theme` for following the desktop
 theme:
 
-- **`radar-core`** is the library both binaries share: the SQLite schema and
+- **`opto-core`** is the library both binaries share: the SQLite schema and
   migrations (`schema.rs`), opening and trimming databases (`db.rs`), the
   queries behind every chart (`query.rs`), and `snapshot.rs`, which reads
   everything the viewer shows for one time range in one go.
-- **`radar-collect`** is the collector. Every five seconds `sampler.rs` reads
+- **`opto-collect`** is the collector. Every five seconds `sampler.rs` reads
   `/proc` and `/sys` (and the local logs of AI coding agents, in `agents/`)
   and `writer.rs` stores the sample. `discover.rs` finds sensors, interfaces
   and disks; `parse.rs` holds the pure parsers for the files read. With
   `--serve` it answers the viewer's queries on stdin and stdout instead, which
   is how the viewer reads another machine over ssh.
-- **`radar`** is the GTK 4 / libadwaita viewer. `worker.rs` runs queries on
+- **`opto`** is the GTK 4 / libadwaita viewer. `worker.rs` runs queries on
   a thread, locally through `snapshot::Reader` or remotely through
-  `ssh ... radar-collect --serve`. `window.rs` builds the UI from the
+  `ssh ... opto-collect --serve`. `window.rs` builds the UI from the
   snapshot it gets back.
 
 ### Storage
 
-The main database is `~/.local/share/radar/radar.db`, in WAL mode. Raw
+The main database is `~/.local/share/opto/opto.db`, in WAL mode. Raw
 samples (`sys_samples`, `sensor_samples`) sit beside two aggregates the
 collector keeps as it writes: `sensor_rollups` per five-minute bucket, and
 `proc_minutes` of CPU ticks per process name per minute. `sensors` and
 `proc_names` give the IDs those rows refer to. Rows older than the retention
 window are trimmed hourly.
 
-To keep the disk quiet, samples are not written to `radar.db` first. The
+To keep the disk quiet, samples are not written to `opto.db` first. The
 collector attaches a second database as `live`, a file on tmpfs under
-`$XDG_RUNTIME_DIR/radar/`, and writes every sample there. At each
+`$XDG_RUNTIME_DIR/opto/`, and writes every sample there. At each
 five-minute boundary `Writer::flush` moves the finished buckets and minutes
-into `radar.db` in bulk: first into `staged_` tables in the live file, tagged
+into `opto.db` in bulk: first into `staged_` tables in the live file, tagged
 with a batch number, then into main, recording that batch number in `meta`
 in the same transaction. A clean stop flushes everything; a killed collector
 finishes or discards whatever batch it left behind when it next starts, so
@@ -70,11 +70,11 @@ Keep these rules when touching storage:
   `db::open_rw_in_memory()` plus `db::attach_live(&conn, None)`, or a file
   under `std::env::temp_dir()` named with the process ID.
 - Collector parsing is tested against the fixture tree in
-  `crates/radar-collect/tests/fixtures`; pass `--root` to point the
+  `crates/opto-collect/tests/fixtures`; pass `--root` to point the
   collector at one.
 - `make install` builds, installs to `~/.local`, and restarts the user
-  service. `radar-collect --seed-demo <days>` fills a database with synthetic
+  service. `opto-collect --seed-demo <days>` fills a database with synthetic
   history for working on the viewer.
-- Measure disk writes with `write_bytes` from `/proc/$(pidof radar-collect)/io`.
+- Measure disk writes with `write_bytes` from `/proc/$(pidof opto-collect)/io`.
   Databases under `/tmp` are on tmpfs and show nothing there. Buffering cut
   the collector from about 540 MB to about 40 MB of disk writes a day.

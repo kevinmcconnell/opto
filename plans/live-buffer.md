@@ -2,24 +2,24 @@
 
 ## Why
 
-`radar-collect` commits a transaction every 5 seconds. Each commit appends 4–6 full 4 KB pages to the WAL: the tail pages of `sys_samples`, `sensor_samples` and `sensor_rollups`, plus the current minute's `proc_minutes` page(s). That adds up to roughly 300–400 MB of disk writes a day for a few MB of actual data. The `proc_minutes` and `sensor_rollups` upserts rewrite the same rows 12 and 60 times over.
+`opto-collect` commits a transaction every 5 seconds. Each commit appends 4–6 full 4 KB pages to the WAL: the tail pages of `sys_samples`, `sensor_samples` and `sensor_rollups`, plus the current minute's `proc_minutes` page(s). That adds up to roughly 300–400 MB of disk writes a day for a few MB of actual data. The `proc_minutes` and `sensor_rollups` upserts rewrite the same rows 12 and 60 times over.
 
 WAL settings can't fix this. `synchronous=NORMAL` is already set, and checkpoints are already small because the same tail pages keep being rewritten. The volume comes from the per-commit WAL appends.
 
 ## Approach
 
-Write each sample to a second SQLite database on tmpfs (`$XDG_RUNTIME_DIR/radar/live.db`). Every 5 minutes, move completed rows into `radar.db` in one transaction. The viewer reads both databases through temp views, so the UI still sees every sample with no added lag, and the existing queries don't change.
+Write each sample to a second SQLite database on tmpfs (`$XDG_RUNTIME_DIR/opto/live.db`). Every 5 minutes, move completed rows into `opto.db` in one transaction. The viewer reads both databases through temp views, so the UI still sees every sample with no added lag, and the existing queries don't change.
 
 Accepted trade-off: a power loss or kernel crash can lose up to 5 minutes of data, because tmpfs is RAM. A clean stop (SIGTERM/SIGINT, so also shutdown and logout) loses nothing. A killed collector loses nothing either: the live file outlives the process, including rows staged mid-flush, and the next start flushes it first.
 
 ## Live database
 
-- Path: `db::live_path(db) -> Option<PathBuf>` in `radar-core`, returning `$XDG_RUNTIME_DIR/radar/live-<hash>.db`, where the hash is of the main database's absolute path, so collectors on different `--db` paths never share a live file. If `XDG_RUNTIME_DIR` is unset or empty, fall back to `/run/user/<uid>` when that directory exists, else `None`.
+- Path: `db::live_path(db) -> Option<PathBuf>` in `opto-core`, returning `$XDG_RUNTIME_DIR/opto/live-<hash>.db`, where the hash is of the main database's absolute path, so collectors on different `--db` paths never share a live file. If `XDG_RUNTIME_DIR` is unset or empty, fall back to `/run/user/<uid>` when that directory exists, else `None`.
 - The collector records the live path in `meta` under `live_db` (and removes the key when it runs without one). Readers find the file there rather than computing it, so the viewer and `--serve` need no runtime directory of their own and always read the right file for the database they open.
-- Holds `sys_samples`, `sensor_samples`, `sensor_rollups` and `proc_minutes`, with the same columns and primary keys as `radar.db` but **no `REFERENCES` clauses**, because foreign keys can't cross databases. Beside each is a `staged_<table>` with the same columns plus `batch INTEGER`, holding rows on their way into `radar.db`.
-- Create them with `CREATE TABLE IF NOT EXISTS` from a `radar-core` function (`schema::create_live(conn, "live")`). The file is ephemeral, so it needs no migrations. If a future schema change adds columns, the collector flushes and then drops and recreates the live tables at startup. Not needed now; note it in a comment.
+- Holds `sys_samples`, `sensor_samples`, `sensor_rollups` and `proc_minutes`, with the same columns and primary keys as `opto.db` but **no `REFERENCES` clauses**, because foreign keys can't cross databases. Beside each is a `staged_<table>` with the same columns plus `batch INTEGER`, holding rows on their way into `opto.db`.
+- Create them with `CREATE TABLE IF NOT EXISTS` from a `opto-core` function (`schema::create_live(conn, "live")`). The file is ephemeral, so it needs no migrations. If a future schema change adds columns, the collector flushes and then drops and recreates the live tables at startup. Not needed now; note it in a comment.
 - Journal mode `WAL` on the live db too, so the viewer can read while the collector writes.
-- `sensors`, `proc_names` and `meta` stay in `radar.db` only, so IDs are shared.
+- `sensors`, `proc_names` and `meta` stay in `opto.db` only, so IDs are shared.
 
 ## Collector changes
 
@@ -85,7 +85,7 @@ In the main loop, after writing a sample:
 
 ## Viewer changes
 
-The viewer reads via `snapshot::Reader` (`radar-core/src/snapshot.rs`), which opens `db::open_ro`. Add live attachment there:
+The viewer reads via `snapshot::Reader` (`opto-core/src/snapshot.rs`), which opens `db::open_ro`. Add live attachment there:
 
 - `Reader` looks up the live path in `meta` (`live_db`) on each read until it finds and attaches one.
 - At the start of each `read`, if it isn't attached yet and the live file exists, `ATTACH DATABASE ?1 AS live` (it inherits read-only from the main connection), then create the views:
@@ -119,4 +119,4 @@ The viewer reads via `snapshot::Reader` (`radar-core/src/snapshot.rs`), which op
 
 ## Verify on the real machine
 
-Before and after, run for an hour and compare `write_bytes` from `/proc/$(pidof radar-collect)/io`. Expect more than a 10× reduction. Also check that the viewer shows the newest 5-second sample immediately, and that `systemctl --user restart radar-collect` mid-bucket leaves no gap or doubled values in the charts.
+Before and after, run for an hour and compare `write_bytes` from `/proc/$(pidof opto-collect)/io`. Expect more than a 10× reduction. Also check that the viewer shows the newest 5-second sample immediately, and that `systemctl --user restart opto-collect` mid-bucket leaves no gap or doubled values in the charts.
