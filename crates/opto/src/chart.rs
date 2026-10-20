@@ -585,14 +585,14 @@ fn point_at(s: &Series, t: i64, bucket: i64) -> Option<Point> {
     (t - p.t < bucket).then_some(p)
 }
 
-/// The value, followed by the peak when the bucket's average hides it.
+/// The value, followed by the bucket's peak.
 fn value_text(p: Point, format: Format) -> String {
     let Some(value) = p.value.map(|v| format.format(v)) else {
         return "–".to_string();
     };
     match p.peak.map(|v| format.format(v)) {
-        Some(peak) if peak != value => format!("{value} (max {peak})"),
-        _ => value,
+        Some(peak) => format!("{value} (max {peak})"),
+        None => value,
     }
 }
 
@@ -675,10 +675,10 @@ mod tests {
     }
 
     #[test]
-    fn tooltip_names_the_peak_only_when_it_differs() {
+    fn tooltip_always_names_the_peak() {
         let text = |value, peak| value_text(Point { t: 0, value, peak }, Format::Percent);
         assert_eq!(text(Some(4.0), Some(84.0)), "4% (max 84%)");
-        assert_eq!(text(Some(40.0), Some(40.2)), "40%");
+        assert_eq!(text(Some(40.0), Some(40.2)), "40% (max 40%)");
         assert_eq!(text(Some(4.0), None), "4%");
         assert_eq!(text(None, Some(84.0)), "–");
     }
