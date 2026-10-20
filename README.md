@@ -105,7 +105,12 @@ The version is set in one place, `[workspace.package]` in `Cargo.toml`.
 3. Tag the commit `v0.2.0` and push the commit and the tag.
 
 CI checks that the tag matches the version, runs the checks, and publishes
-the GitHub release.
+the GitHub release with `opto-0.2.0-x86_64.tar.gz`, a staged `/usr` tree, and
+its `.sha256`.
+
+Then update the [`opto-bin`](https://aur.archlinux.org/packages/opto-bin)
+AUR package: set `pkgver`, reset `pkgrel` to 1, put the new checksum in
+`sha256sums`, run `makepkg --printsrcinfo > .SRCINFO`, and commit and push.
 
 ## License
 
