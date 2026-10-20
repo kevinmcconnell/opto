@@ -22,10 +22,10 @@ pub struct Cli {
 pub enum Command {
     /// Open the viewer (the default when no command is given)
     View(View),
-    /// Set up an integration, such as Claude Code's status line
-    Configure { tool: Tool },
-    /// Undo what `configure` set up
-    Remove { tool: Tool },
+    /// Start the collector and connect Claude Code, or set up just one of them
+    Setup { tool: Option<Tool> },
+    /// Undo what `setup` did; the recorded data is kept
+    Remove { tool: Option<Tool> },
 }
 
 #[derive(Args)]
@@ -43,8 +43,16 @@ pub struct View {
 
 #[derive(Clone, Copy, ValueEnum)]
 pub enum Tool {
+    /// The collector's systemd user service
+    Service,
     /// Claude Code's status line, which feeds the Claude card
     Claude,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Action {
+    Setup,
+    Remove,
 }
 
 fn parse_range(name: &str) -> Result<i64, String> {
@@ -77,16 +85,28 @@ mod tests {
     }
 
     #[test]
-    fn configure_and_remove_name_a_tool() {
+    fn setup_and_remove_take_an_optional_tool() {
         assert!(matches!(
-            parse(&["configure", "claude"]).command,
-            Some(Command::Configure { tool: Tool::Claude })
+            parse(&["setup"]).command,
+            Some(Command::Setup { tool: None })
+        ));
+        assert!(matches!(
+            parse(&["setup", "service"]).command,
+            Some(Command::Setup {
+                tool: Some(Tool::Service)
+            })
+        ));
+        assert!(matches!(
+            parse(&["remove"]).command,
+            Some(Command::Remove { tool: None })
         ));
         assert!(matches!(
             parse(&["remove", "claude"]).command,
-            Some(Command::Remove { tool: Tool::Claude })
+            Some(Command::Remove {
+                tool: Some(Tool::Claude)
+            })
         ));
-        assert!(Cli::try_parse_from(["opto", "configure", "vim"]).is_err());
+        assert!(Cli::try_parse_from(["opto", "setup", "vim"]).is_err());
     }
 
     #[test]

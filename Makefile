@@ -19,14 +19,11 @@ install: build
 	install -Dm644 data/opto-collect.service $(UNITDIR)/opto-collect.service
 	install -Dm644 data/$(APP_ID).desktop $(DATADIR)/applications/$(APP_ID).desktop
 	install -Dm644 data/$(APP_ID).svg $(DATADIR)/icons/hicolor/scalable/apps/$(APP_ID).svg
-	systemctl --user daemon-reload
-	systemctl --user enable --now opto-collect
-	systemctl --user restart opto-collect
-	-$(BINDIR)/opto configure claude
+	$(BINDIR)/opto setup service
+	-$(BINDIR)/opto setup claude
 
 uninstall:
-	-$(BINDIR)/opto remove claude
-	-systemctl --user disable --now opto-collect
+	-$(BINDIR)/opto remove
 	rm -f $(BINDIR)/opto-collect $(BINDIR)/opto $(BINDIR)/opto-claude-statusline
 	rm -f $(UNITDIR)/opto-collect.service
 	rm -f $(DATADIR)/applications/$(APP_ID).desktop

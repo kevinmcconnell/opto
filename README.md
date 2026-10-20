@@ -37,6 +37,13 @@ installs the desktop file, icon and user service, starts the collector, and
 sets up the [Claude Code status line](#ai-agents).
 Run `make uninstall` to remove it all again.
 
+The last two steps are `opto setup`, which you can run yourself at any time.
+`opto setup service` enables and restarts the collector's user service, and
+`opto setup claude` sets up the status line; plain `opto setup` does both,
+skipping Claude Code if it is not installed. `opto remove`, `opto remove
+service` and `opto remove claude` undo them. Removing the service keeps the
+recorded data.
+
 ## Data
 
 The database lives at `~/.local/share/opto/opto.db`. Run
@@ -58,7 +65,7 @@ status line command after every assistant message. `make install` puts
 `opto-claude-statusline` in `~/.local/bin`; it saves that JSON under
 `~/.local/state/opto/claude/`, one line per update, and prints nothing.
 
-`make install` also runs `opto configure claude`, which sets the status line
+`make install` also runs `opto setup claude`, which sets the status line
 in `~/.claude/settings.json` (or `$CLAUDE_CONFIG_DIR/settings.json`):
 
 ```json
@@ -76,7 +83,7 @@ of the file as it was, and does nothing if it is already set. If you already
 have a different status line it leaves it alone and warns; add a line to your
 script that pipes its input through `opto-claude-statusline` as well.
 
-`make uninstall` runs `opto remove claude`, which takes the key out again if
+`opto remove claude`, which `make uninstall` runs, takes the key out again if
 it still runs only `opto-claude-statusline`, and leaves any other status line
 alone.
 

@@ -1,4 +1,4 @@
-//! `opto configure claude` and `opto remove claude`: point Claude Code's
+//! `opto setup claude` and `opto remove claude`: point Claude Code's
 //! status line at `opto-claude-statusline`, or take it away again, touching
 //! nothing else in its settings file.
 
@@ -8,14 +8,10 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::cli::Action;
+
 const COMMAND: &str = "opto-claude-statusline";
 const KEY: &str = "statusLine";
-
-#[derive(Clone, Copy, PartialEq)]
-pub enum Action {
-    Configure,
-    Remove,
-}
 
 #[derive(Debug, PartialEq)]
 enum Outcome {
@@ -38,7 +34,7 @@ pub fn claude(action: Action) -> i32 {
         }
     };
     let planned = match action {
-        Action::Configure => plan_configure(existing.as_deref(), &helper_command()),
+        Action::Setup => plan_configure(existing.as_deref(), &helper_command()),
         Action::Remove => plan_remove(existing.as_deref()),
     };
     let outcome = match planned {
@@ -50,7 +46,7 @@ pub fn claude(action: Action) -> i32 {
     };
     let path_name = path.display();
     match (action, outcome) {
-        (Action::Configure, Outcome::Unchanged) => {
+        (Action::Setup, Outcome::Unchanged) => {
             println!("opto: Claude Code status line already set in {path_name}");
             0
         }
@@ -58,7 +54,7 @@ pub fn claude(action: Action) -> i32 {
             println!("opto: no opto status line to remove in {path_name}");
             0
         }
-        (Action::Configure, Outcome::Conflict(command)) => {
+        (Action::Setup, Outcome::Conflict(command)) => {
             eprintln!(
                 "opto: warning: {path_name} already has a status line ({command:?}); leaving it alone.\n\
                  To keep it, have it pipe its input through {COMMAND} as well."
@@ -75,7 +71,7 @@ pub fn claude(action: Action) -> i32 {
         (action, Outcome::Write(text)) => match write(&path, &text) {
             Ok(()) => {
                 let done = match action {
-                    Action::Configure => "set Claude Code status line in",
+                    Action::Setup => "set Claude Code status line in",
                     Action::Remove => "removed Claude Code status line from",
                 };
                 println!("opto: {done} {path_name}");
@@ -87,6 +83,12 @@ pub fn claude(action: Action) -> i32 {
             }
         },
     }
+}
+
+/// Whether Claude Code has a settings directory here, so that a plain
+/// `opto setup` does not create one for someone who does not use it.
+pub fn claude_installed() -> bool {
+    settings_path().parent().is_some_and(Path::is_dir)
 }
 
 /// Claude Code reads `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`.
