@@ -2,7 +2,7 @@
 Description=opto system activity collector
 
 [Service]
-ExecStart=%h/.local/bin/opto-collect
+ExecStart=@bindir@/opto-collect
 Restart=on-failure
 Nice=19
 IOSchedulingClass=idle

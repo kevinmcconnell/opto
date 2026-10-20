@@ -44,6 +44,12 @@ skipping Claude Code if it is not installed. `opto remove`, `opto remove
 service` and `opto remove claude` undo them. Removing the service keeps the
 recorded data.
 
+To stage a system-wide install for a package, without the setup step:
+
+```
+make install-files DESTDIR="$pkgdir" PREFIX=/usr UNITDIR=/usr/lib/systemd/user
+```
+
 ## Data
 
 The database lives at `~/.local/share/opto/opto.db`. Run
