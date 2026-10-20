@@ -11,7 +11,7 @@ use radar_core::{Sensor, SensorKind, Stats, SysPoint, query};
 use crate::askpass::{self, Kind, Prompt};
 use crate::axis::Format;
 use crate::cards::Card;
-use crate::chart::{AxisGroup, Series, Style, YRange};
+use crate::chart::{AxisGroup, Point, Series, Style, YRange};
 use crate::config::Config;
 use crate::machine::{self, MachinePicker};
 use crate::palette::{CYCLE, ColorRole, Hue};
@@ -536,8 +536,18 @@ impl Viewer {
 
     fn render(&self, snap: &Snapshot) {
         let c = &self.cards;
-        let sys = |f: fn(&SysPoint) -> Option<f64>| -> Vec<(i64, Option<f64>)> {
-            snap.sys.iter().map(|p| (p.t, f(p))).collect()
+        let sys = |f: fn(&SysPoint) -> (Option<f64>, Option<f64>)| -> Vec<Point> {
+            snap.sys
+                .iter()
+                .map(|p| {
+                    let (value, peak) = f(p);
+                    Point {
+                        t: p.t,
+                        value,
+                        peak,
+                    }
+                })
+                .collect()
         };
         let breaks: Rc<[i64]> = snap.sys.iter().filter(|p| p.gap).map(|p| p.t).collect();
         let set = |card: &Card, series: Vec<Series>, stats: Option<Stats>| {
@@ -555,10 +565,15 @@ impl Viewer {
         set(
             &c.cpu,
             vec![
-                line("Busy", sys(|p| p.cpu_busy), Style::Fill, ColorRole::Accent),
+                line(
+                    "Busy",
+                    sys(|p| (p.cpu_busy, p.cpu_busy_peak)),
+                    Style::Fill,
+                    ColorRole::Accent,
+                ),
                 line(
                     "I/O wait",
-                    sys(|p| p.cpu_iowait),
+                    sys(|p| (p.cpu_iowait, p.cpu_iowait_peak)),
                     Style::Line,
                     ColorRole::Named(Hue::Orange),
                 ),
@@ -567,10 +582,15 @@ impl Viewer {
         );
 
         let mut mem = vec![
-            line("Used", sys(|p| p.mem_used), Style::Fill, ColorRole::Accent),
+            line(
+                "Used",
+                sys(|p| (p.mem_used, p.mem_used_peak)),
+                Style::Fill,
+                ColorRole::Accent,
+            ),
             line(
                 "Total",
-                sys(|p| p.mem_total),
+                sys(|p| (p.mem_total, None)),
                 Style::Dashed,
                 ColorRole::Foreground,
             ),
@@ -578,7 +598,7 @@ impl Viewer {
         if snap.sys.iter().any(|p| p.swap_used.unwrap_or(0.0) > 0.0) {
             mem.push(line(
                 "Swap",
-                sys(|p| p.swap_used),
+                sys(|p| (p.swap_used, p.swap_used_peak)),
                 Style::Line,
                 ColorRole::Named(Hue::Purple),
             ));
@@ -590,13 +610,13 @@ impl Viewer {
             vec![
                 line(
                     "Received",
-                    sys(|p| p.net_rx),
+                    sys(|p| (p.net_rx, p.net_rx_peak)),
                     Style::Fill,
                     ColorRole::Named(Hue::Blue),
                 ),
                 line(
                     "Sent",
-                    sys(|p| p.net_tx),
+                    sys(|p| (p.net_tx, p.net_tx_peak)),
                     Style::Fill,
                     ColorRole::Named(Hue::Green),
                 ),
@@ -608,13 +628,13 @@ impl Viewer {
             vec![
                 line(
                     "Read",
-                    sys(|p| p.disk_read),
+                    sys(|p| (p.disk_read, p.disk_read_peak)),
                     Style::Fill,
                     ColorRole::Named(Hue::Purple),
                 ),
                 line(
                     "Write",
-                    sys(|p| p.disk_write),
+                    sys(|p| (p.disk_write, p.disk_write_peak)),
                     Style::Fill,
                     ColorRole::Named(Hue::Orange),
                 ),
@@ -622,12 +642,13 @@ impl Viewer {
             snap.sys_stats.disk_read,
         );
 
-        let mut by_sensor: HashMap<i64, Vec<(i64, Option<f64>)>> = HashMap::new();
+        let mut by_sensor: HashMap<i64, Vec<Point>> = HashMap::new();
         for p in &snap.sensor_points {
-            by_sensor
-                .entry(p.sensor_id)
-                .or_default()
-                .push((p.t, Some(p.value)));
+            by_sensor.entry(p.sensor_id).or_default().push(Point {
+                t: p.t,
+                value: Some(p.value),
+                peak: Some(p.peak),
+            });
         }
         let config = self.config.borrow();
         let sensor_series = |kind: SensorKind,

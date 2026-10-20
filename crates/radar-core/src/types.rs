@@ -13,6 +13,14 @@ pub struct SysPoint {
     pub net_tx: Option<f64>,
     pub disk_read: Option<f64>,
     pub disk_write: Option<f64>,
+    pub cpu_busy_peak: Option<f64>,
+    pub cpu_iowait_peak: Option<f64>,
+    pub mem_used_peak: Option<f64>,
+    pub swap_used_peak: Option<f64>,
+    pub net_rx_peak: Option<f64>,
+    pub net_tx_peak: Option<f64>,
+    pub disk_read_peak: Option<f64>,
+    pub disk_write_peak: Option<f64>,
     /// The bucket holds the first sample after a collection gap.
     pub gap: bool,
 }
@@ -101,6 +109,7 @@ pub struct SensorPoint {
     pub t: i64,
     pub sensor_id: i64,
     pub value: f64,
+    pub peak: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

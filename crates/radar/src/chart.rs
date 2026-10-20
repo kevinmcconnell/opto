@@ -15,10 +15,17 @@ pub enum Style {
     Dashed,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Point {
+    pub t: i64,
+    pub value: Option<f64>,
+    pub peak: Option<f64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Series {
     pub label: String,
-    pub points: Vec<(i64, Option<f64>)>,
+    pub points: Vec<Point>,
     pub style: Style,
     pub color: ColorRole,
 }
@@ -306,7 +313,7 @@ fn y_axis(d: &Data, layout: &pango::Layout) -> (f64, Vec<f64>, f64) {
     let data_max = d
         .series
         .iter()
-        .flat_map(|s| s.points.iter().filter_map(|p| p.1))
+        .flat_map(|s| s.points.iter().filter_map(|p| p.value))
         .fold(0.0f64, f64::max);
     let (top_value, ticks) = match d.y_range {
         YRange::Fixed(max) => (max, axis::fixed_ticks(max)),
@@ -498,13 +505,13 @@ fn segments(d: &Data, s: &Series, y_of: &impl Fn(f64) -> f64) -> Vec<Vec<(f64, f
     let mut current: Vec<(f64, f64)> = Vec::new();
     let mut prev_t: Option<i64> = None;
     let half = d.bucket as f64 / 2.0;
-    for &(t, v) in &s.points {
+    for &Point { t, value, .. } in &s.points {
         let gap =
             prev_t.is_some_and(|pt| t - pt > 3 * d.bucket || d.breaks.binary_search(&t).is_ok());
-        if (v.is_none() || gap) && !current.is_empty() {
+        if (value.is_none() || gap) && !current.is_empty() {
             out.push(std::mem::take(&mut current));
         }
-        if let Some(v) = v {
+        if let Some(v) = value {
             current.push((d.x_of(t as f64 + half), y_of(v)));
         }
         prev_t = Some(t);
@@ -572,10 +579,21 @@ fn draw_series(
     }
 }
 
-fn value_at(s: &Series, t: i64, bucket: i64) -> Option<f64> {
-    let i = s.points.partition_point(|p| p.0 <= t);
-    let (pt, v) = *s.points.get(i.checked_sub(1)?)?;
-    (t - pt < bucket).then_some(v).flatten()
+fn point_at(s: &Series, t: i64, bucket: i64) -> Option<Point> {
+    let i = s.points.partition_point(|p| p.t <= t);
+    let p = *s.points.get(i.checked_sub(1)?)?;
+    (t - p.t < bucket).then_some(p)
+}
+
+/// The value, followed by the peak when the bucket's average hides it.
+fn value_text(p: Point, format: Format) -> String {
+    let Some(value) = p.value.map(|v| format.format(v)) else {
+        return "–".to_string();
+    };
+    match p.peak.map(|v| format.format(v)) {
+        Some(peak) if peak != value => format!("{value} (max {peak})"),
+        _ => value,
+    }
 }
 
 fn tooltip_markup(d: &Data, t: i64) -> String {
@@ -587,7 +605,7 @@ fn tooltip_markup(d: &Data, t: i64) -> String {
     };
     let mut out = format!("<b>{}</b>", glib::markup_escape_text(&format_local(t, fmt)));
     for s in &d.series {
-        let value = value_at(s, t, d.bucket).map_or("–".to_string(), |v| d.format.format(v));
+        let value = point_at(s, t, d.bucket).map_or("–".to_string(), |p| value_text(p, d.format));
         out.push_str(&format!(
             "\n{}: {}",
             glib::markup_escape_text(&s.label),
@@ -627,7 +645,14 @@ mod tests {
     fn lengths(d: &Data, points: Vec<(i64, Option<f64>)>) -> Vec<usize> {
         let s = Series {
             label: String::new(),
-            points,
+            points: points
+                .into_iter()
+                .map(|(t, value)| Point {
+                    t,
+                    value,
+                    peak: None,
+                })
+                .collect(),
             style: Style::Line,
             color: ColorRole::Accent,
         };
@@ -647,5 +672,14 @@ mod tests {
             ),
             vec![1, 1]
         );
+    }
+
+    #[test]
+    fn tooltip_names_the_peak_only_when_it_differs() {
+        let text = |value, peak| value_text(Point { t: 0, value, peak }, Format::Percent);
+        assert_eq!(text(Some(4.0), Some(84.0)), "4% (max 84%)");
+        assert_eq!(text(Some(40.0), Some(40.2)), "40%");
+        assert_eq!(text(Some(4.0), None), "4%");
+        assert_eq!(text(None, Some(84.0)), "–");
     }
 }
