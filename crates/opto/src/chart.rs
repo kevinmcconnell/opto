@@ -231,6 +231,7 @@ impl TimeSeriesChart {
         self.area.add_controller(motion);
 
         let data = self.data.clone();
+        let table = RefCell::new(None::<TooltipTable>);
         self.area
             .connect_query_tooltip(move |_, x, _, keyboard, tooltip| {
                 if keyboard {
@@ -240,7 +241,10 @@ impl TimeSeriesChart {
                 if d.series.is_empty() || !d.in_plot(x as f64) {
                     return false;
                 }
-                tooltip.set_markup(Some(&tooltip_markup(&d, d.t_of(x as f64))));
+                let mut table = table.borrow_mut();
+                let table = table.get_or_insert_with(TooltipTable::new);
+                table.update(&d, d.t_of(x as f64));
+                tooltip.set_custom(Some(&table.grid));
                 true
             });
 
@@ -585,34 +589,87 @@ fn point_at(s: &Series, t: i64, bucket: i64) -> Option<Point> {
     (t - p.t < bucket).then_some(p)
 }
 
-/// The value, followed by the bucket's peak.
-fn value_text(p: Point, format: Format) -> String {
-    let Some(value) = p.value.map(|v| format.format(v)) else {
-        return "–".to_string();
+/// The value and peak columns of a series' tooltip row; the peak column is
+/// empty when there is no value or no peak.
+fn value_cells(p: Option<Point>, format: Format) -> (String, String) {
+    let Some(value) = p.and_then(|p| p.value) else {
+        return ("–".to_string(), String::new());
     };
-    match p.peak.map(|v| format.format(v)) {
-        Some(peak) => format!("{value} (max {peak})"),
-        None => value,
-    }
+    let peak = p
+        .and_then(|p| p.peak)
+        .map_or(String::new(), |v| format!("max {}", format.format(v)));
+    (format.format(value), peak)
 }
 
-fn tooltip_markup(d: &Data, t: i64) -> String {
-    let t = t.div_euclid(d.bucket) * d.bucket;
+fn tooltip_title(d: &Data, t: i64) -> String {
     let fmt = if d.to - d.from > 86400 {
         "%a %-e %b, %H:%M:%S"
     } else {
         "%H:%M:%S"
     };
-    let mut out = format!("<b>{}</b>", glib::markup_escape_text(&format_local(t, fmt)));
-    for s in &d.series {
-        let value = point_at(s, t, d.bucket).map_or("–".to_string(), |p| value_text(p, d.format));
-        out.push_str(&format!(
-            "\n{}: {}",
-            glib::markup_escape_text(&s.label),
-            glib::markup_escape_text(&value)
-        ));
+    format_local(t, fmt)
+}
+
+/// The tooltip's table, kept from one query to the next so that only the
+/// text changes as the pointer moves.
+struct TooltipTable {
+    grid: gtk::Grid,
+    title: gtk::Label,
+    rows: Vec<[gtk::Label; 3]>,
+}
+
+impl TooltipTable {
+    fn new() -> Self {
+        let grid = gtk::Grid::builder()
+            .column_spacing(12)
+            .row_spacing(2)
+            .build();
+        let title = gtk::Label::builder().xalign(0.0).build();
+        title.set_attributes(Some(&tabular(true)));
+        grid.attach(&title, 0, 0, 3, 1);
+        TooltipTable {
+            grid,
+            title,
+            rows: Vec::new(),
+        }
     }
-    out
+
+    fn update(&mut self, d: &Data, t: i64) {
+        let t = t.div_euclid(d.bucket) * d.bucket;
+        self.title.set_text(&tooltip_title(d, t));
+        while self.rows.len() > d.series.len() {
+            for label in self.rows.pop().unwrap() {
+                self.grid.remove(&label);
+            }
+        }
+        while self.rows.len() < d.series.len() {
+            let row = self.rows.len() as i32 + 1;
+            let cells = [0.0, 1.0, 1.0].map(|xalign| {
+                let label = gtk::Label::builder().xalign(xalign).build();
+                label.set_attributes(Some(&tabular(false)));
+                label
+            });
+            for (column, label) in cells.iter().enumerate() {
+                self.grid.attach(label, column as i32, row, 1, 1);
+            }
+            self.rows.push(cells);
+        }
+        for (s, [label, value, peak]) in d.series.iter().zip(&self.rows) {
+            let (value_text, peak_text) = value_cells(point_at(s, t, d.bucket), d.format);
+            label.set_text(&s.label);
+            value.set_text(&value_text);
+            peak.set_text(&peak_text);
+        }
+    }
+}
+
+fn tabular(bold: bool) -> pango::AttrList {
+    let attrs = pango::AttrList::new();
+    attrs.insert(pango::AttrFontFeatures::new("tnum"));
+    if bold {
+        attrs.insert(pango::AttrInt::new_weight(pango::Weight::Bold));
+    }
+    attrs
 }
 
 #[cfg(test)]
@@ -675,11 +732,13 @@ mod tests {
     }
 
     #[test]
-    fn tooltip_always_names_the_peak() {
-        let text = |value, peak| value_text(Point { t: 0, value, peak }, Format::Percent);
-        assert_eq!(text(Some(4.0), Some(84.0)), "4% (max 84%)");
-        assert_eq!(text(Some(40.0), Some(40.2)), "40% (max 40%)");
-        assert_eq!(text(Some(4.0), None), "4%");
-        assert_eq!(text(None, Some(84.0)), "–");
+    fn tooltip_cells_always_name_the_peak() {
+        let cells = |value, peak| value_cells(Some(Point { t: 0, value, peak }), Format::Percent);
+        let owned = |a: &str, b: &str| (a.to_string(), b.to_string());
+        assert_eq!(cells(Some(4.0), Some(84.0)), owned("4%", "max 84%"));
+        assert_eq!(cells(Some(40.0), Some(40.2)), owned("40%", "max 40%"));
+        assert_eq!(cells(Some(4.0), None), owned("4%", ""));
+        assert_eq!(cells(None, Some(84.0)), owned("–", ""));
+        assert_eq!(value_cells(None, Format::Percent), owned("–", ""));
     }
 }
