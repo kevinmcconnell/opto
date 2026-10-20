@@ -197,7 +197,7 @@ impl Remote {
         if status.is_ok_and(|s| s.code() == Some(127)) {
             Problem::new(
                 format!("Opto Not Installed on {}", self.machine),
-                "Install it there with <tt>make install</tt>",
+                "Install it there to start collecting data",
             )
         } else if self.answered {
             Problem::new(
