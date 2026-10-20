@@ -2,7 +2,7 @@ use adw::prelude::*;
 use radar_core::Stats;
 
 use crate::axis::Format;
-use crate::chart::{TimeSeriesChart, YRange};
+use crate::chart::{Point, TimeSeriesChart, YRange};
 
 pub struct Card {
     pub root: gtk::Box,
@@ -49,14 +49,14 @@ impl Card {
         }
     }
 
-    pub fn set_summary(&self, points: &[(i64, Option<f64>)], stats: Option<Stats>) {
+    pub fn set_summary(&self, points: &[Point], stats: Option<Stats>) {
         self.summary
             .set_text(&summarize(points, stats, self.format));
     }
 }
 
-fn summarize(points: &[(i64, Option<f64>)], stats: Option<Stats>, format: Format) -> String {
-    let (Some(now), Some(stats)) = (points.iter().rev().find_map(|p| p.1), stats) else {
+fn summarize(points: &[Point], stats: Option<Stats>, format: Format) -> String {
+    let (Some(now), Some(stats)) = (points.iter().rev().find_map(|p| p.value), stats) else {
         return String::new();
     };
     format!(
