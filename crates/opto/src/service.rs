@@ -4,7 +4,9 @@
 //! Setup restarts a running collector only when the installed binary differs
 //! from the one it runs, since every restart leaves a gap in the charts.
 
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::cli::Action;
@@ -80,13 +82,38 @@ fn runs_installed_binary(pid: u32) -> bool {
     let Some(installed) = show("ExecStart").and_then(|value| exec_path(&value)) else {
         return false;
     };
-    match (
-        std::fs::read(format!("/proc/{pid}/exe")),
-        std::fs::read(installed),
-    ) {
-        (Ok(running), Ok(installed)) => running == installed,
-        _ => false,
+    same_contents(format!("/proc/{pid}/exe").as_ref(), &installed).unwrap_or(false)
+}
+
+/// Compares two files by size, then chunk by chunk, stopping at the first
+/// difference.
+fn same_contents(a: &Path, b: &Path) -> io::Result<bool> {
+    let (mut a, mut b) = (File::open(a)?, File::open(b)?);
+    if a.metadata()?.len() != b.metadata()?.len() {
+        return Ok(false);
     }
+    let (mut chunk_a, mut chunk_b) = ([0; 64 * 1024], [0; 64 * 1024]);
+    loop {
+        let n = fill(&mut a, &mut chunk_a)?;
+        if n != fill(&mut b, &mut chunk_b)? || chunk_a[..n] != chunk_b[..n] {
+            return Ok(false);
+        }
+        if n == 0 {
+            return Ok(true);
+        }
+    }
+}
+
+/// Reads until `buf` is full or the file ends, returning how much was read.
+fn fill(file: &mut File, buf: &mut [u8]) -> io::Result<usize> {
+    let mut filled = 0;
+    while filled < buf.len() {
+        match file.read(&mut buf[filled..])? {
+            0 => break,
+            n => filled += n,
+        }
+    }
+    Ok(filled)
 }
 
 /// The program in a `systemctl show -p ExecStart` value, which looks like
@@ -147,5 +174,31 @@ mod tests {
         assert_eq!(exec_path(""), None);
         assert_eq!(exec_path("\n"), None);
         assert_eq!(exec_path("{ path= ; argv[]= }"), None);
+    }
+
+    fn temp_file(name: &str, contents: &[u8]) -> PathBuf {
+        let path = std::env::temp_dir().join(format!("opto-{}-{name}", std::process::id()));
+        std::fs::write(&path, contents).unwrap();
+        path
+    }
+
+    #[test]
+    fn compares_files_by_contents() {
+        let big: Vec<u8> = (0..200_000).map(|i| i as u8).collect();
+        let mut late_change = big.clone();
+        *late_change.last_mut().unwrap() ^= 1;
+        let original = temp_file("original", &big);
+        let copy = temp_file("copy", &big);
+        let changed = temp_file("changed", &late_change);
+        let shorter = temp_file("shorter", &big[..big.len() - 1]);
+
+        assert!(same_contents(&original, &copy).unwrap());
+        assert!(!same_contents(&original, &changed).unwrap());
+        assert!(!same_contents(&original, &shorter).unwrap());
+        assert!(same_contents(&original, Path::new("/nonexistent/opto")).is_err());
+
+        for path in [original, copy, changed, shorter] {
+            std::fs::remove_file(path).unwrap();
+        }
     }
 }
