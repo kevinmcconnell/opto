@@ -38,11 +38,13 @@ sets up the [Claude Code status line](#ai-agents).
 Run `make uninstall` to remove it all again.
 
 The last two steps are `opto setup`, which you can run yourself at any time.
-`opto setup service` enables and restarts the collector's user service, and
+`opto setup service` enables and starts the collector's user service, and
 `opto setup claude` sets up the status line; plain `opto setup` does both,
 skipping Claude Code if it is not installed. `opto remove`, `opto remove
 service` and `opto remove claude` undo them. Removing the service keeps the
-recorded data.
+recorded data. Setup restarts a running collector only when the installed
+binary differs from the one it runs, so running it again leaves no gap in the
+charts.
 
 To stage a system-wide install for a package, without the setup step:
 
