@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "omarchy-theme"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "gtk4",
  "libadwaita",
@@ -729,7 +729,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "opto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-channel",
  "clap",
@@ -743,7 +743,7 @@ dependencies = [
 
 [[package]]
 name = "opto-collect"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lexopt",
  "opto-core",
@@ -754,7 +754,7 @@ dependencies = [
 
 [[package]]
 name = "opto-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "rusqlite",
  "rustix",
