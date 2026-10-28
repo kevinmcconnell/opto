@@ -104,7 +104,8 @@ struct Viewer {
     procs: ProcPanel,
     range: Cell<Range>,
     machine: RefCell<Option<String>>,
-    remembered: Cell<bool>,
+    /// Whether the machine has answered since it was chosen or last failed.
+    connected: Cell<bool>,
     /// Whether refreshing waits for Try Again, after another machine
     /// failed. Reconnecting on every tick could ask for a password again
     /// and again.
@@ -202,7 +203,7 @@ pub fn build(
             procs: ProcPanel::new(),
             range: Cell::new(Range::Preset(preset_secs)),
             machine: RefCell::new(None),
-            remembered: Cell::new(false),
+            connected: Cell::new(false),
             stalled: Cell::new(false),
             prompt: RefCell::new(None),
             _askpass: askpass,
@@ -435,7 +436,7 @@ impl Viewer {
         }
         self.machine_picker.show(machine.as_deref());
         *self.machine.borrow_mut() = machine;
-        self.remembered.set(false);
+        self.connected.set(false);
         self.request();
     }
 
@@ -447,6 +448,8 @@ impl Viewer {
         self.generation.set(generation);
         self.secs_since_request.set(0);
         self.stalled.set(false);
+        self.machine_picker
+            .set_connecting(self.machine.borrow().is_some() && !self.connected.get());
         let bucket = query::nice_bucket(to - from, width);
         self.worker.send(Request {
             generation,
@@ -464,15 +467,19 @@ impl Viewer {
         if reply.generation != self.generation.get() {
             return;
         }
+        self.machine_picker.set_connecting(false);
         match reply.snapshot {
             Ok(snap) => {
-                self.remember_machine(&snap.meta.hostname);
+                if !self.connected.replace(true) {
+                    self.remember_machine(&snap.meta.hostname);
+                }
                 self.stack.set_visible_child_name("data");
                 self.picker.set_oldest(snap.oldest);
                 self.render(&snap);
                 *self.last.borrow_mut() = Some(snap);
             }
             Err(problem) => {
+                self.connected.set(false);
                 let remote = self.machine.borrow().is_some();
                 self.stalled.set(remote);
                 self.try_again.set_visible(remote);
@@ -527,9 +534,7 @@ impl Viewer {
 
     /// Put the machine at the top of the recent list once it has answered.
     fn remember_machine(&self, hostname: &str) {
-        if let Some(machine) = self.machine.borrow().as_deref()
-            && !self.remembered.replace(true)
-        {
+        if let Some(machine) = self.machine.borrow().as_deref() {
             machine::remember(machine, hostname);
         }
     }

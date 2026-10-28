@@ -14,6 +14,8 @@ const MAX_RECENT: usize = 6;
 const THIS_COMPUTER: &str = "This computer";
 const LOCAL_ICON: &str = "computer-symbolic";
 const REMOTE_ICON: &str = "network-server-symbolic";
+const SHOW_ICON: &str = "go-next-symbolic";
+const SHOW_TOOLTIP: &str = "Show Machine";
 
 /// A machine shown before: the ssh destination it was reached by, and the
 /// hostname it reported.
@@ -101,6 +103,7 @@ pub struct MachinePicker {
     pub root: gtk::Stack,
     full: gtk::Box,
     entry: gtk::Entry,
+    show: gtk::Button,
     popover: gtk::Popover,
     list: gtk::ListBox,
     compact: gtk::MenuButton,
@@ -159,6 +162,7 @@ impl MachinePicker {
             root,
             full,
             entry,
+            show: show.clone(),
             popover,
             list,
             compact,
@@ -176,15 +180,30 @@ impl MachinePicker {
     pub fn show(&self, machine: Option<&str>) {
         *self.current.borrow_mut() = machine.map(String::from);
         self.entry.set_text(machine.unwrap_or_default());
-        let icon = if machine.is_some() {
+        self.entry.set_primary_icon_name(Some(self.icon()));
+        self.compact.set_icon_name(self.icon());
+        self.compact
+            .set_tooltip_text(Some(machine.unwrap_or(THIS_COMPUTER)));
+    }
+
+    pub fn set_connecting(&self, connecting: bool) {
+        if connecting {
+            self.show.set_child(Some(&adw::Spinner::new()));
+            self.show.set_tooltip_text(Some("Connecting…"));
+            self.compact.set_child(Some(&adw::Spinner::new()));
+        } else {
+            self.show.set_icon_name(SHOW_ICON);
+            self.show.set_tooltip_text(Some(SHOW_TOOLTIP));
+            self.compact.set_icon_name(self.icon());
+        }
+    }
+
+    fn icon(&self) -> &'static str {
+        if self.current.borrow().is_some() {
             REMOTE_ICON
         } else {
             LOCAL_ICON
-        };
-        self.entry.set_primary_icon_name(Some(icon));
-        self.compact.set_icon_name(icon);
-        self.compact
-            .set_tooltip_text(Some(machine.unwrap_or(THIS_COMPUTER)));
+        }
     }
 
     pub fn set_compact(&self, compact: bool) {
@@ -386,8 +405,8 @@ fn hint() -> gtk::Label {
 
 fn show_button() -> gtk::Button {
     gtk::Button::builder()
-        .icon_name("go-next-symbolic")
-        .tooltip_text("Show Machine")
+        .icon_name(SHOW_ICON)
+        .tooltip_text(SHOW_TOOLTIP)
         .build()
 }
 
